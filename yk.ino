@@ -1,14 +1,7 @@
-#include "stdio.h"
-#include "I2Cdev.h"
-#include "MPU9250.h"
 #include <Wire.h>
-#include <TFMPlus.h>  // Include TFMini Plus Library v1.5.0
-#include "printf.h" 
 
 #define Motor1 5
 #define Motor2 6
-
-TFMPlus tfmP; 
 
 const byte interruptPin1 = 2;
 const byte interruptPin2 = 3;
@@ -16,128 +9,74 @@ const byte interruptPin2 = 3;
 volatile unsigned long pwm_value[2] = {0, 0};
 volatile unsigned long timer[2] = {0, 0};
 
-char buffer[100];
+const int MPU=0x68;
+double f64PrevTime_milis;
+double f64CurTime_milis;
+float f32AccX_ms2;
+float f32AccY_ms2;
+float f32AccZ_ms2;
+float f32Tmp;
+float f32GyroXAngv_degs;
+float f32GyroYAngv_degs;
+float f32GyroZAngv_degs;
+float f32AverGyX_degs;
+float f32AverGyY_degs;
+float f32AverGyZ_degs;
+float f32AverHeight_cm;
+float f32CompAngleX_deg;
+float f32CompAngleY_deg;
+float f32CompAngleZ_deg;
+float f32SumGyroX;
+float f32TimeInterval_s;
+float f32Height_cm;
+int f32dist_cm;
 
-MPU9250 accelgyro;
-I2Cdev   I2C_M;
-
-void get_one_sample_date_mxyz();
-void getAccel_Data(void);
-
-void getACCAngle();
-void calcGyroAngle();
-void CompFilterAcc();
-
-uint8_t buffer_m[6];
-
-int16_t ax, ay, az;
-int16_t gx, gy, gz;
-int16_t mx, my, mz;
-
-float heading;
-float tiltheading;
-
-double Axyz[3];
-double Gxyz[3];
-double Mxyz[3];
-const double DEG_PER_SEC = 32767 / 250;
-#define sample_num_mdate  5000
-
-volatile float mx_sample[3];
-volatile float my_sample[3];
-volatile float mz_sample[3];
-
-static float mx_centre = 0;
-static float my_centre = 0;
-static float mz_centre = 0;
-
-volatile int mx_max = 0;
-volatile int my_max = 0;
-volatile int mz_max = 0;
-
-volatile int mx_min = 0;
-volatile int my_min = 0;
-volatile int mz_min = 0;
-
-double temperature;
-double pressure;
-double atm;
-double altitude;
-double dt;
-double AccAngleX;
-double AccAngleY;
-double AccAngleZ;
-double GyroAngleX;
-double GyroAngleY;
-double GyroAngleZ;
-double CompFilterAccX;
-double CompFilterAccY;
-double CompFilterAccZ;
-double accel_yz;
-double accel_xz;
-double sumAcX=0, sumAcY=0, sumAcZ=0;
-double sumGyX=0, sumGyY=0, sumGyZ=0, sumheight=0;
-double averGyX, averGyY, averGyZ;
-double averAcX, averAcY, averAcZ, averheight;
-double Accx, Accy, Accz;
 int i = 0; //avercount
-double t_now;
-double t_prev;
-int16_t tfDist = 0;    // Distance to object in centimeters
-int16_t tfFlux = 0;    // Strength or quality of return signal
-int16_t tfTemp = 0;    // Internal temperature of Lidar sensor chip
 
-double tstart;
-double tstop;
-double dInput1, dInput2, dInput3, dInput4;
-double roll_target_angle=0.0,  pitch_target_angle=0.0, Yaw_target_angle=0.0, Z_target_height=0;
-double prev_roll_angle, prev_pitch_angle, prev_yaw_angle, prev_Z_height;
-double pterm1, iterm1, dterm1, pterm2, iterm2, dterm2, pterm3, iterm3, dterm3;
-double kp1=0.2, ki1=0.05, kd1=0.05, kp2=0.0, ki2=0.0, kd2=0.0, kp3=0.0, ki3=0.0, kd3=0.0, kp4=0.0, ki4=0.0, kd4=0.0;
-double error1, error2, error3, error4;
-double Rolloutput, Pitchoutput, Yawoutput;
-double height;
-
-double pterm4, iterm4, dterm4;
+float f32RollCMD_deg=0.0, f32PitchCMD_deg=0.0, f32YawCMD_deg=0.0, f32HeightCMD_cm=0;
+float f32PrevRollAngle_deg, f32PrevPitchAngle_deg, f32PrevYawAngle_deg, f32PrevHeight_cm;
+double pterm1, iterm1, dterm1, pterm2, iterm2, dterm2, pterm3, iterm3, dterm3, pterm4, iterm4, dterm4;
+double kp1=0.35, ki1=0.05, kd1=0.01, kp2=0.0, ki2=0.0, kd2=0.0, kp3=0.0, ki3=0.0, kd3=0.0, kp4=0.0, ki4=0.0, kd4=0.0;
+float Rolloutput, Pitchoutput, Yawoutput;
 double Zoutput;
-double Height;
-double pwm1, pwm2;
+
+float f32PwmTrim_pwm = 1200;
+
+unsigned long f64PrevTime_bluemilis = 0;
+unsigned long f64CurTime_bluemilis;
 
 
-
-double mtrim = 1100;
 
 void setup()
 {
   pinMode(5, OUTPUT);
   pinMode(6, OUTPUT);
-
+  initMPU6050();
   Serial.begin(19200);
   delay(20);               // Give port time to initalize
-  printf_begin();          // Initialize printf.
-  accelgyro.initialize();
+  // accelgyro.initialize();
   Wire.begin();
   Serial1.begin(115200);  //set bit rate of serial port connecting LiDAR with Arduino
-  delay(10);
-  tfmP.begin(&Serial1);
   delay(10);
   Serial2.begin(19200);
   attachInterrupt(digitalPinToInterrupt(interruptPin1), calcPWM1, CHANGE);
   attachInterrupt(digitalPinToInterrupt(interruptPin2), calcPWM2, CHANGE);
-  delay(10000);
+//  pinMode(8, OUTPUT);
+  analogWrite(5, 1151);
+  analogWrite(6, 1151);
+  delay(5000);
+  Serial.println("START");
 }
 
-void loop() 
+void loop()
 {
-  tstart = millis();
+  blue();
+  tfminis();
   duration();
   initDT();
-  getAccel_Data();
-  getGyro_Data(); 
-  getACCAngle();
+  readAccelGyro();
   calcDT();
-  calcGyroAngle();
-  CompFilterAcc();
+  getAngle();
   caliSensor();
   RollPID();
 //  PitchPID();
@@ -145,215 +84,172 @@ void loop()
 //  tiltheight();
 //  heightPID();
   Motormixing();
-  
-  Serial.println(CompFilterAccX);
-//  Serial.println(AccAngleX);
-//  Serial.print(CompFilterAccY);
-//  Serial.print(",");
-//  Serial.print(CompFilterAccZ);
-  Serial.print("\n");
-  tstart = millis();
+//  Serial.println(f32CompAngleX_deg);
 
 
-
-  
-//  blue();
-//  tfminis();
-
-  tstop = millis();
-//  Serial.print("time:");
-//  Serial.println(tstop-tstart);
-  
 
 }
 
-
-void initDT(){
-  t_prev = millis();
-}
-
-void calcDT(){
-  t_now = millis();
-  dt = (t_now - t_prev)/1000.0;
-  t_prev = t_now;
-}
-
-void Mxyz_init_calibrated ()
+void initDT()
 {
-
-//    Serial.println(F("Before using 9DOF,we need to calibrate the compass frist,It will takes about 2 minutes."));
-//    Serial.print("  ");
-//    Serial.println(F("During  calibratting ,you should rotate and turn the 9DOF all the time within 2 minutes."));
-//    Serial.print("  ");
-//    Serial.println(F("If you are ready ,please sent a command data 'ready' to start sample and calibrate."));
-//    while (!Serial.find("ready"));
-//    Serial.println("  ");
-//    Serial.println("ready");
-//    Serial.println("Sample starting......");
-//    Serial.println("waiting ......");
-
-
+  f64PrevTime_milis = millis();
 }
-void get_calibration_Data ()
+
+void calcDT()
 {
-    for (int i = 0; i < sample_num_mdate; i++)
-    {
-        get_one_sample_date_mxyz();
-
-        if (mx_sample[2] >= mx_sample[1])mx_sample[1] = mx_sample[2];
-        if (my_sample[2] >= my_sample[1])my_sample[1] = my_sample[2]; //find max value
-        if (mz_sample[2] >= mz_sample[1])mz_sample[1] = mz_sample[2];
-
-        if (mx_sample[2] <= mx_sample[0])mx_sample[0] = mx_sample[2];
-        if (my_sample[2] <= my_sample[0])my_sample[0] = my_sample[2]; //find min value
-        if (mz_sample[2] <= mz_sample[0])mz_sample[0] = mz_sample[2];
-    }
-    mx_max = mx_sample[1];
-    my_max = my_sample[1];
-    mz_max = mz_sample[1];
-
-    mx_min = mx_sample[0];
-    my_min = my_sample[0];
-    mz_min = mz_sample[0];
-    
-    mx_centre = (mx_max + mx_min) / 2;
-    my_centre = (my_max + my_min) / 2;
-    mz_centre = (mz_max + mz_min) / 2;
+  f64CurTime_milis = millis();
+  f32TimeInterval_s = (f64CurTime_milis - f64PrevTime_milis)/1000.0;
+  f64PrevTime_milis = f64CurTime_milis;
 }
 
-void getAccel_Data(void)
+void readAccelGyro()
 {
-    accelgyro.getMotion9(&ax, &ay, &az, &gx, &gy, &gz, &mx, &my, &mz);
-    Axyz[0] = (double) ax / 16384.0;
-    Axyz[1] = (double) ay / 16384.0;
-    Axyz[2] = (double) az / 16384.0;
+    Wire.beginTransmission(MPU);
+    Wire.write(0x3B);
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU, 14, true);
+    f32AccX_ms2 = (Wire.read() << 8 | Wire.read()) / 16384.0 * 9.81 ;//16384는 분해능이 +-2g m/s^2을 만들기 위해서 9.81곱함
+    f32AccY_ms2 = (Wire.read() << 8 | Wire.read()) / 16384.0 * 9.81 ;
+    f32AccZ_ms2 = (Wire.read() << 8 | Wire.read()) / 16384.0 * 9.81 ;
+    f32Tmp = (Wire.read() << 8 | Wire.read()) ; // 340;//340은 섭씨 단위로 바꾸기 위해
+    f32GyroXAngv_degs = (Wire.read() << 8 | Wire.read()) / 131.0; //131은 degree/sec으로 만드는 분해능
+    f32GyroYAngv_degs = (Wire.read() << 8 | Wire.read()) / 131.0;
+    f32GyroZAngv_degs = (Wire.read() << 8 | Wire.read()) / 131.0;
 }
 
-void getACCAngle(void)
-{   
-    
-    double accel_yz, accel_xz;
-
-    accelgyro.getMotion9(&ax, &ay, &az, &gx, &gy, &gz, &mx, &my, &mz);
-    Accx = (double) ax / 16384.0;
-    Accy = (double) ay / 16384.0;
-    Accz = (double) az / 16384.0;
-    accel_yz = (double) sqrt(pow(Accy, 2) + pow(Accz, 2))*1.0000;
-    accel_xz = (double) sqrt(pow(Accx, 2) + pow(Accz, 2))*1.0000;
-    AccAngleY = (double) atan(-Accx / accel_yz)*180/PI;
-    AccAngleX = (double) atan(Accy / accel_xz)*180/PI;
-    AccAngleZ = 0;
-    
-}
-
-void getGyro_Data(void)
-{   
-    accelgyro.getMotion9(&ax, &ay, &az, &gx, &gy, &gz, &mx, &my, &mz);
-
-    Gxyz[0] = (double) (gx-averGyX) * 250 / 32768;
-    Gxyz[1] = (double) (gy-averGyY) * 250 / 32768;
-    Gxyz[2] = (double) (gz-averGyZ) * 250 / 32768;
-}
-
-void calcGyroAngle()
-{ 
-  GyroAngleX += ((gx - averGyX) / DEG_PER_SEC) * dt;  //각속도로 변환
-  GyroAngleY += ((gy - averGyY) / DEG_PER_SEC) * dt;
-  GyroAngleZ += ((gz - averGyZ) / DEG_PER_SEC) * dt;
-}
-
-void CompFilterAcc()
+void initMPU6050()
 {
-  const double ALPHA = 0.8;
-  double tmp_angleX, tmp_angleY, tmp_angleZ; //임시 각도
+    Wire.begin();
+    Wire.beginTransmission(MPU);
+    Wire.write(0x6B);
+    Wire.write(0x00);
+    Wire.endTransmission(true);
+}
+
+void getAngle()
+{
+  const float ALPHA = 0.8;
+  float f32AccYZ_ms2, f32AccXZ_ms2, f32AccAngleY_deg, f32AccAngleX_deg, f32AccAngleZ_deg;
+  float f32TmpAngleX_deg, f32TmpAngleY_deg, f32TmpAngleZ_deg;
+
+  f32AccYZ_ms2 = sqrtf(powf(f32AccY_ms2, 2) + powf(f32AccZ_ms2, 2))*1.0000;
+  f32AccXZ_ms2 = sqrtf(powf(f32AccX_ms2, 2) + powf(f32AccZ_ms2, 2))*1.0000;
+  f32AccAngleY_deg = atanf(-f32AccX_ms2 / f32AccYZ_ms2)*180/PI;
+  f32AccAngleX_deg = atanf(f32AccY_ms2 / f32AccXZ_ms2)*180/PI;
+  f32AccAngleZ_deg = 0;
 
   if( i == 0 )
   {
-    CompFilterAccX = AccAngleX;
-    CompFilterAccY = AccAngleY;
-    CompFilterAccZ = AccAngleZ;
-    
+    f32CompAngleX_deg = f32AccAngleX_deg;
+    f32CompAngleY_deg = f32AccAngleY_deg;
+    f32CompAngleZ_deg = f32AccAngleZ_deg;
   }
 
-  tmp_angleX = CompFilterAccX + ((gx - averGyX) / DEG_PER_SEC) * dt;
-  tmp_angleY = CompFilterAccY + ((gy - averGyY) / DEG_PER_SEC) * dt;
-  tmp_angleZ = CompFilterAccZ + ((gz - averGyZ) / DEG_PER_SEC) * dt;
+  f32TmpAngleX_deg = f32CompAngleX_deg + (f32GyroXAngv_degs - f32AverGyX_degs) * f32TimeInterval_s;
+  f32TmpAngleY_deg = f32CompAngleY_deg + (f32GyroYAngv_degs - f32AverGyY_degs) * f32TimeInterval_s;
+  f32TmpAngleZ_deg = f32CompAngleZ_deg + (f32GyroZAngv_degs - f32AverGyZ_degs) * f32TimeInterval_s;
   
-  CompFilterAccX = ALPHA * tmp_angleX + (1.0-ALPHA) * AccAngleX;
-  CompFilterAccY = ALPHA * tmp_angleY + (1.0-ALPHA) * AccAngleY;
-  CompFilterAccZ = tmp_angleZ;
-
+  f32CompAngleX_deg = ALPHA * f32TmpAngleX_deg + (1.0-ALPHA) * f32AccAngleX_deg;
+  f32CompAngleY_deg = ALPHA * f32TmpAngleY_deg + (1.0-ALPHA) * f32AccAngleY_deg;
+  f32CompAngleZ_deg = f32TmpAngleZ_deg;
 }
-
 
 void caliSensor()
 {
+  float f32SumGyroXAngv_degs, f32SumGyroYAngv_degs, f32SumGyroZAngv_degs, f32SumHeight_cm;
+
   if(i<10)
   {   
-    averGyX=0; averGyY=0; averGyZ=0;
-    sumAcX+=ax; sumAcY+=ay; sumAcZ+=az;
-    sumGyX+=gx; sumGyY+=gy; sumGyZ+=gz; 
-    sumheight+=height; 
-     // Serial.println("a");
- 
+    f32AverGyX_degs=0; f32AverGyY_degs=0; f32AverGyZ_degs=0;
+    f32SumGyroXAngv_degs += f32GyroXAngv_degs;
+    f32SumGyroYAngv_degs += f32GyroYAngv_degs;
+    f32SumGyroZAngv_degs += f32GyroZAngv_degs;
+    f32SumHeight_cm += f32Height_cm;
+    delay(2);
   }
   else if(i=10)
   {
-    averGyX=sumGyX/i; averGyY=sumGyY/i; averGyZ=sumGyZ/i;
-    averAcX=sumAcX/i; averAcY=sumAcY/i; averAcZ=sumAcZ/i;
-    averheight=sumheight/i;
+    f32AverGyX_degs = f32SumGyroXAngv_degs/i;
+    f32AverGyY_degs = f32SumGyroYAngv_degs/i;
+    f32AverGyZ_degs = f32SumGyroZAngv_degs/i;
+    f32AverHeight_cm = f32SumHeight_cm/i;
+    delay(2);
   }
   i++;
 }
 
-void tfminis()
-{
-    if( tfmP.getData( tfDist, tfFlux, tfTemp)) // Get data from the device.
-  {
-    printf( "Dist:%04icm ", tfDist);   // display distance,
-    printf("\r\n");
-  }
-  else                  // If the command fails...
-  {
-    tfmP.printFrame();  // display the error and HEX dataa
-  }
-}
-
 void blue()
 {
-  if (Serial2.available()) 
+  f64CurTime_bluemilis = millis();
+  if( f64CurTime_bluemilis - f64PrevTime_bluemilis > 100)
   {
-    Serial.write(Serial2.read());
+    Serial2.print("@");
+    float f32blueangle_deg = 0;
+    if( f32CompAngleX_deg < 0 )
+    {
+      f32blueangle_deg = abs(f32CompAngleX_deg);
+      Serial2.print("-");
+    }
+    else
+    {
+      Serial2.print("+");
+    }
+    int f32intpart = (int)f32blueangle_deg;
+    int f32decimalpart = round((f32blueangle_deg - f32intpart)*100);
+//    Serial.print("int : ");
+    checkprintHEX(f32intpart);
+//    Serial.print("decimal : ");
+    checkprintHEX(f32decimalpart);
+//    Serial.print("dist : ");
+    checkprintHEX(f32dist_cm);
+    int f32sumpart = f32intpart + f32decimalpart + f32dist_cm;
+    if( f32sumpart > 256 )
+    {
+      f32sumpart -= 256;
+    }
+    checkprintHEX(f32sumpart);
+    f64PrevTime_bluemilis = f64CurTime_bluemilis;
   }
-  if (Serial.available()) 
+  
+}
+
+int checkprintHEX(int inputnum)
+{
+  if(inputnum < 17)
   {
-    Serial2.write(Serial.read());
+    Serial2.print("0");
   }
+  Serial2.print( inputnum, HEX);
 }
 
 void RollPID()
 {
+  float f32RollError_deg, f32RollDelta_deg;
 
-  error1 =  roll_target_angle - CompFilterAccX; 
-  dInput1 = CompFilterAccX - prev_roll_angle;
-  pterm1 = kp1 * error1;
-  iterm1 += ki1 * error1 * dt;
-  dterm1 = -kd1 * (dInput1 / dt);
+  f32RollError_deg = f32RollCMD_deg - f32CompAngleX_deg;
+  f32RollDelta_deg = f32CompAngleX_deg - f32PrevRollAngle_deg;
+  f32PrevRollAngle_deg = f32CompAngleX_deg;
+
+  pterm1 = kp1 * f32RollError_deg;
+  iterm1 += ki1 * f32RollError_deg * f32TimeInterval_s;
+  dterm1 = -kd1 * (f32RollDelta_deg / f32TimeInterval_s);
 
   Rolloutput = pterm1 + iterm1 + dterm1;
+//  Serial.print("Rolloutput : ");
 //  Serial.println(Rolloutput);
 }
-
+/*
 void PitchPID()
 {
+  float f32PitchError_deg, f32PitchDelta_deg;
 
-  error2 =  pitch_target_angle - CompFilterAccY; 
-  dInput2 = CompFilterAccY - prev_pitch_angle;
-  prev_pitch_angle = CompFilterAccY;
+  f32PitchError_deg =  f32PitchCMD_deg - f32CompAngleY_deg;
+  f32PitchDelta_deg = f32CompAngleY_deg - f32PrevPitchAngle_deg;
+  f32PrevPitchAngle_deg = f32CompAngleY_deg;
 
-  pterm2 = kp2 * error2;
-  iterm2 += ki2 * error2 * dt;
-  dterm2 = -kd2 * (dInput2 / dt);
+  pterm2 = kp2 * f32PitchError_deg;
+  iterm2 += ki2 * f32PitchError_deg * f32TimeInterval_s;
+  dterm2 = -kd2 * (f32PitchDelta_deg / f32TimeInterval_s);
 
   Pitchoutput = pterm2 + iterm2 + dterm2;
 //  Serial.println(Pitchoutput);
@@ -361,14 +257,15 @@ void PitchPID()
 
 void YawPID()
 {
+  float f32YawError_deg, f32YawDelta_deg;
 
-  error3 =  Yaw_target_angle - CompFilterAccZ; 
-  dInput3 = CompFilterAccZ - prev_yaw_angle;
-  prev_yaw_angle = CompFilterAccZ;
+  f32YawError_deg =  f32YawCMD_deg - f32CompAngleZ_deg;
+  f32YawDelta_deg = f32CompAngleZ_deg - f32PrevYawAngle_deg;
+  f32PrevYawAngle_deg = f32CompAngleZ_deg;
 
-  pterm3 = kp3 * error3;
-  iterm3 += ki3 * error3 * dt;
-  dterm3 = -kd3 * (dInput3 / dt);
+  pterm3 = kp3 * f32YawError_deg;
+  iterm3 += ki3 * f32YawError_deg * f32TimeInterval_s;
+  dterm3 = -kd3 * (f32YawDelta_deg / f32TimeInterval_s);
 
   Yawoutput = pterm3 + iterm3 + dterm3;
 //  Serial.println(Yawoutput);
@@ -376,8 +273,8 @@ void YawPID()
 
 void tiltheight()
 {
-//  height = tfDist * cos(CompFilterAccX);
-    height = tfDist * cos(0);
+//  height = (float)f32dist_cm * cos(CompFilterAccX);
+  height = (float)f32dist_cm * cos(0.0);
   Height = height-averheight; // 초기값 빼준 보정 고도
 //  Serial.print("Height : ");
 //  Serial.println(Height);
@@ -385,70 +282,104 @@ void tiltheight()
 //  Serial.println(averheight);
   
 }
-
-
-
+*/
 void heightPID()
 {
+  float f32HeightError_cm, f32HeightDelta_cm;
 
-  error4 =  (Z_target_height) - (height-averheight); 
-  dInput4 = height - prev_Z_height;
-  prev_Z_height = height;
+  f32HeightError_cm =  f32HeightCMD_cm - (f32Height_cm - f32AverHeight_cm);
+  f32HeightDelta_cm = f32Height_cm - f32PrevHeight_cm;
+  f32PrevHeight_cm = f32Height_cm;
 
-  pterm3 = kp4 * error4;
-  iterm3 += ki4 * error4 * dt;
-  dterm3 = -kd4 * (dInput4 / dt);
+  pterm4 = kp4 * f32HeightError_cm;
+  iterm4 += ki4 * f32HeightError_cm  * f32TimeInterval_s;
+  dterm4 = -kd4 * (f32HeightDelta_cm / f32TimeInterval_s);
 
   Zoutput = pterm4 + iterm4 + dterm4;
 //  Serial.print("Heightcmd : ");
 //  Serial.println(Zoutput);
- 
+
 }
 
 void Motormixing()
 {
+  float f32Pwm1_pwm, f32Pwm2_pwm;
 
-   pwm1 = mtrim - Rolloutput + Zoutput;
-   pwm2 = mtrim + Rolloutput + Zoutput;
-  analogWrite(5, pwm1);
-  analogWrite(6, pwm2);
+  f32Pwm1_pwm = f32PwmTrim_pwm - Rolloutput;// + Zoutput;
+  f32Pwm2_pwm = f32PwmTrim_pwm + Rolloutput;// + Zoutput;
+  f32Pwm1_pwm = min(f32Pwm1_pwm, 1500);
+  f32Pwm2_pwm = min(f32Pwm2_pwm, 1500);
+  f32Pwm1_pwm = max(1100, f32Pwm1_pwm);
+  f32Pwm2_pwm = max(1100, f32Pwm2_pwm);
+  analogWrite(5, f32Pwm1_pwm);
+  analogWrite(6, f32Pwm2_pwm);
 //  Serial.print("pwm1 : ");
-//  Serial.println(pwm1);
+//  Serial.println(f32Pwm1_pwm);
 //  Serial.print("pwm2 : ");
-//  Serial.println(pwm2);
+//  Serial.println(f32Pwm2_pwm);
+
+  
+
   
 }
 
-
-void calcPWM1() 
+void calcPWM1()
 {
-  if(digitalRead(interruptPin1) == HIGH) { 
+  if(digitalRead(interruptPin1) == HIGH) 
+  { 
     timer[0] = micros();
-    } 
-  else {
-    if(timer[0] != 0) {
+  } 
+  else 
+  {
+    if(timer[0] != 0) 
+    {
       pwm_value[0] = micros() - timer[0];
-      }
-    } 
+    }
+  } 
 } 
 
-void calcPWM2() 
+void calcPWM2()
 {
-  if(digitalRead(interruptPin2) == HIGH) { 
+  if(digitalRead(interruptPin2) == HIGH) 
+  { 
     timer[1] = micros();
-    } 
-  else {
-    if(timer[1] != 0) {
+  } 
+  else 
+  {
+    if(timer[1] != 0) 
+    {
       pwm_value[1] = micros() - timer[1];
-      }
-    } 
+    }
+  } 
 } 
 
 // Write the duration of PWM
-void duration() 
+void duration()
 {
 //  Serial.println(String(pwm_value[0]) + "   " + String(pwm_value[1]));
-//  Z_target_height = map(pwm_value[0], 1100, 2000, 0, 200);
-//  roll_target_angle = map(pwm_value[1], 1100, 2000, -20, 20);
+  f32HeightCMD_cm = map(pwm_value[0], 1100, 2000, 0, 200);
+  f32RollCMD_deg = map(pwm_value[1], 1100, 2000, -20, 20);
 //  Serial.println(String(Z_target_height) + "   " + String(roll_target_angle));
+}
+
+void tfminis()
+{
+  int uart[9] = {0};
+  const int HEADER=0x59;
+  if(Serial1.available()>0)
+  {
+    if(Serial1.read() == HEADER)
+    {
+      for (int j = 0; j < 8; j++) 
+      { 
+        uart[j] = Serial1.read();
+      }
+      if( uart[1] != -1)
+      {
+        f32dist_cm = uart[1];
+      }
+//      Serial.print("dist = ");
+//      Serial.println(f32dist_cm);
+    }
+  }
 }
